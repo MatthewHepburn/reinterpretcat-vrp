@@ -133,11 +133,19 @@ impl TravelLimitConstraint {
             TravelTime::Departure(departure),
         );
 
-        let second_arr = departure + first_to_second_dur;
-        let second_wait = (second.place.time.start - second_arr).max(0.);
-        let second_dep = second_arr + second_wait + second.place.duration;
+        // This probably isn't a reliable way of finding a departure job
+        if first.job.is_none() {
+            // Special case to account for flexibility in route start time
+            // We don't want to wait at the first activity, we want to just start later
+            // Waiting could be required if route has constraint on latest possible start - can we check for that from here?
+            (first_to_second_dis, first_to_second_dur)
+        } else {
+            let second_arr = departure + first_to_second_dur;
+            let second_wait = (second.place.time.start - second_arr).max(0.);
+            let second_dep = second_arr + second_wait + second.place.duration;
 
-        (first_to_second_dis, second_dep - departure)
+            (first_to_second_dis, second_dep - departure)
+        }
     }
 }
 
@@ -161,8 +169,18 @@ impl FeatureConstraint for TravelLimitConstraint {
                     }
 
                     if let Some(duration_limit) = tour_duration_limit {
+                        let first = route_ctx.route().tour.get(1);
+
+                        // Subtract out wait time at the first job - we can just leave later
+                        // Won't necessarily be true if we have a latest departure time - how can we account for that?
+                        let wait_discount = if !first.is_none() {
+                            *route_ctx.state().get_activity_state(WAITING_KEY, first.unwrap()).unwrap_or(&0_f64)
+                        } else {
+                            0.0
+                        };
+
                         let curr_dur = route_ctx.state().get_route_state(TOTAL_DURATION_KEY).cloned().unwrap_or(0.);
-                        let total_duration = curr_dur + change_duration;
+                        let total_duration = curr_dur + change_duration - wait_discount;
                         if duration_limit < total_duration {
                             return ConstraintViolation::skip(self.duration_code);
                         }
